@@ -6,6 +6,7 @@
 // This builds the same shape of widget next to controls whose tooltips are known
 // to work, then asks AppKit what each view actually carries.
 #include <wx/wx.h>
+#include <wx/aui/aui.h>
 #include <string>
 
 void        become_foreground_app();        // probe.mm
@@ -77,6 +78,21 @@ public:
         add("wxButton", btn, "tip D");
 
         panel->SetSizer(sizer);
+
+        // OrcaSlicer's UV editor is not a plain child panel: it is a pane managed
+        // by wxAuiManager. Put the same widget in one, since that is the last
+        // structural difference left between this and the real thing.
+        m_aui.SetManagedWindow(frame);
+        auto *docked = new wxPanel(frame);
+        auto *dsizer = new wxBoxSizer(wxVERTICAL);
+        auto *in_aui = new PaintedButton(docked, "in AUI pane", "tip E", true);
+        dsizer->Add(in_aui, 0, wxALL, 8);
+        docked->SetSizer(dsizer);
+        m_aui.AddPane(panel, wxAuiPaneInfo().CenterPane());
+        m_aui.AddPane(docked, wxAuiPaneInfo().Right().Caption("pane").BestSize(220, 120));
+        m_aui.Update();
+        m_probes.push_back({"wxWindow + BG_STYLE_PAINT inside a wxAui pane", in_aui, "tip E"});
+
         frame->Show();
         frame->Raise();
 
@@ -105,11 +121,13 @@ private:
             wxPrintf("%-48s %s\n", p.what, hover_probe(p.win).c_str());
 
         wxPrintf("\nmismatches: %d\n", failures);
+        m_aui.UnInit();
         frame->Destroy();
         ExitMainLoop();
         m_exit = failures;
     }
 
+    wxAuiManager       m_aui;
     std::vector<Probe> m_probes;
     int                m_exit = 0;
 

@@ -22,32 +22,61 @@ std::string native_tooltip(wxWindow *w)
     return tip == nil ? std::string() : std::string([tip UTF8String]);
 }
 
-// Park the cursor over the widget and look for a window our process owns that is
-// neither the frame nor the panel: a displayed tooltip is its own window.
-// CGWarpMouseCursorPosition needs no accessibility grant, which matters on a CI
-// runner where nothing can click "Allow".
+// Park the cursor over the widget and look for a tooltip window.
+//
+// Counting every window on screen was wrong twice over: a tooltip left over from
+// the previous widget keeps the total from rising, and warping the cursor moves
+// it without producing the mouse-moved events that start AppKit's tooltip timer.
+// So count only windows this process owns, and feed the event loop a real
+// mouse-moved event, which needs no accessibility grant because it never leaves
+// the process.
+static NSUInteger own_window_count()
+{
+    NSArray *all = (__bridge_transfer NSArray *) CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+    const pid_t me    = [[NSProcessInfo processInfo] processIdentifier];
+    NSUInteger  count = 0;
+    for (NSDictionary *w in all)
+        if ([[w objectForKey:(id) kCGWindowOwnerPID] intValue] == me)
+            ++count;
+    return count;
+}
+
 std::string hover_probe(wxWindow *w)
 {
     NSView *view = (NSView *) w->GetHandle();
     if (view == nil || [view window] == nil)
         return "no view";
+    NSWindow *window = [view window];
 
-    const NSRect  in_window = [view convertRect:[view bounds] toView:nil];
-    const NSRect  on_screen = [[view window] convertRectToScreen:in_window];
-    const CGFloat height    = NSMaxY([[NSScreen screens][0] frame]);
-    const CGPoint centre    = CGPointMake(NSMidX(on_screen), height - NSMidY(on_screen));
+    // Start away from the widget so the move onto it is a real crossing.
+    CGWarpMouseCursorPosition(CGPointMake(5, 5));
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
+    const NSUInteger before = own_window_count();
 
-    const size_t before = [(__bridge NSArray *) CGWindowListCopyWindowInfo(
-        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID) count];
+    const NSPoint centre_in_window = [view convertPoint:NSMakePoint(NSMidX([view bounds]),
+                                                                    NSMidY([view bounds]))
+                                                 toView:nil];
+    const NSRect  on_screen = [window convertRectToScreen:
+                                  NSMakeRect(centre_in_window.x, centre_in_window.y, 1, 1)];
+    CGWarpMouseCursorPosition(CGPointMake(NSMinX(on_screen),
+                                          NSMaxY([[NSScreen screens][0] frame]) - NSMinY(on_screen)));
 
-    CGWarpMouseCursorPosition(centre);
-    CGAssociateMouseAndMouseCursorPosition(true);
-    for (int i = 0; i < 40; ++i) {      // up to 4 s, the system tooltip delay plus slack
+    for (int i = 0; i < 60; ++i) {      // up to 6 s: the system delay plus slack
+        NSEvent *move = [NSEvent mouseEventWithType:NSEventTypeMouseMoved
+                                           location:centre_in_window
+                                      modifierFlags:0
+                                          timestamp:[[NSProcessInfo processInfo] systemUptime]
+                                       windowNumber:[window windowNumber]
+                                            context:nil
+                                        eventNumber:0
+                                         clickCount:0
+                                           pressure:0];
+        if (move != nil)
+            [NSApp postEvent:move atStart:NO];
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
-        NSArray *now = (__bridge_transfer NSArray *) CGWindowListCopyWindowInfo(
-            kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
-        if ([now count] > before)
-            return "tooltip window appeared";
+        if (own_window_count() > before)
+            return "tooltip shown";
     }
-    return "no tooltip window";
+    return "NO TOOLTIP";
 }
