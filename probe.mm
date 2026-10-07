@@ -49,6 +49,12 @@ std::string hover_probe(wxWindow *w)
         return "no view";
     NSWindow *window = [view window];
 
+    // An NSWindow ignores mouse-moved events unless asked to take them, so
+    // without this the posted events are dropped before any tracking code sees
+    // them and nothing ever starts the tooltip timer.
+    [window setAcceptsMouseMovedEvents:YES];
+    [window makeKeyAndOrderFront:nil];
+
     // Start away from the widget so the move onto it is a real crossing.
     CGWarpMouseCursorPosition(CGPointMake(5, 5));
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
