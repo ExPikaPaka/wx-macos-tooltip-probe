@@ -1,0 +1,36 @@
+name: tooltip probe
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install wxWidgets
+        run: brew install wxwidgets
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Probe
+        run: |
+          ./build/probe 2>&1 | tee result.txt
+          echo
+          if grep -q MISMATCH result.txt ; then
+            echo "A tooltip did not reach its NSView. The lines above say which widget."
+            exit 1
+          fi
+          echo "Every widget carried its tooltip on its NSView."
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result
+          path: result.txt
